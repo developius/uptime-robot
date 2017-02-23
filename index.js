@@ -1,150 +1,119 @@
-'use strict';
+const request = require("request")
 
-var request = require('then-jsonp');
-var IS_BROWSER = require('is-browser');
+const base = 'https://api.uptimerobot.com/v2/'
 
-var base = 'https://api.uptimerobot.com/';
-
-module.exports = Client;
-function Client(apiKey) {
-  if (apiKey === '' || typeof apiKey !== 'string') {
-    throw new Error('Uptime Robot API Key must be provided');
-  }
-  this.request = function (method, params, callback) {
-    params.apiKey = apiKey;
-    params.format = 'json';
-    if (!IS_BROWSER) params.noJsonCallback = '1';
-    return request('GET', base + method, {
-      qs: params,
-      callbackName: 'jsonUptimeRobotApi',
-      callbackParameter: false,
-      skipJsonpOnServer: true
-    }).then(function (res) {
-      if (res.stat === 'fail') {
-        throw makeError(res);
-      } else {
-        return res;
-      }
-    }).nodeify(callback);
-  };
+module.exports = Robot
+function Robot(key){
+	if (key === '' || typeof key !== 'string') {
+		throw new Error('Uptime Robot API Key must be provided')
+	}
+	this.key = key
+	this.request = function(method, options, callback) {
+		options.api_key = this.key
+		options.format = 'json'
+		request({
+			method: 'POST',
+			url: base + method, 
+			headers: { 'cache-control': 'no-cache', 'content-type': 'application/x-www-form-urlencoded' },
+			form: options
+		}, function(error, response, body) {
+			body = JSON.parse(body)
+			if (error || body.stat === 'fail') {
+				callback(makeError(body), body)
+			} else {
+				callback(error, body)
+			}
+		})
+	}
 }
 
-function makeError(res) {
-  var err = new Error(res.message);
-  err.name = 'UptimeRobotServerError';
-  err.code = res.id;
-  return err;
+function makeError(response) {
+	let err = new Error(response.error.message)
+	err.name = 'UptimeRobotServerError'
+	err.code = response.error.type
+	return err
 }
 
-Client.prototype.getMonitors = function (options, callback) {
-  if (typeof options === 'function') {
-    callback = options;
-    options = {};
-  }
-  options = options || {};
-  if (!options.logs && options.alertContacts) throw new Error('logs is required if alert contacts is true.');
-  var params = {};
-  if (options.monitors) params.monitors = options.monitors.join('-');
-  if (options.customUptimeRatio) params.customUptimeRatio = options.customUptimeRatio.join('-');
-  if (options.logs) params.logs = '1';
-  if (options.alertContacts) params.alertContacts = '1';
-  if (options.showMonitorAlertConcats) params.showMonitorAlertConcats = '1';
-  if (options.showTimezone) params.showTimezone = '1';
-  if (options.responseTimes) params.responseTimes  = '1';
+Robot.prototype.getMonitors = function (options, callback) {
+	if (typeof options === 'function') {
+		callback = options
+		options = {}
+	}
+	options = options || {}
 
-  return this.request('getMonitors', params).then(function (res) {
-    var monitors = res.monitors.monitor;
-    monitors.forEach(function (monitor) {
-      if (monitor.customuptimeratio)
-        monitor.customuptimeratio = monitor.customuptimeratio.split('-');
-      else
-        monitor.customuptimeratio = [];
-      if (monitor.log)
-        monitor.log.forEach(function (log) {
-          log.datetime = parseDate(log.datetime);
-        });
-    });
-    return monitors;
-  }).nodeify(callback);
-};
+	if (!options.logs && options.alertContacts) throw new Error('Logs is required if alert contacts is true.')
+	if (options.monitors) options.monitors = normaliseArray(options.monitors)
+	if (options.customUptimeRatio) options.customUptimeRatio = normaliseArray(options.customUptimeRatio)
+	if (options.logs) options.logs = '1'
+	if (options.alertContacts) options.alertContacts = '1'
+	if (options.showMonitorAlertConcats) options.showMonitorAlertConcats = '1'
+	if (options.showTimezone) options.showTimezone = '1'
+	if (options.responseTimes) options.responseTimes  = '1'
 
-Client.prototype.newMonitor = function (options, callback) {
-  if (!options.friendlyName) throw new Error('friendlyName is required');
-  if (!options.url) throw new Error('url is required');
-  var params = {
-    monitorFriendlyName:  options.friendlyName,
-    monitorURL:           options.url,
-    monitorType:          options.type || '1',
-    monitorSubType:       options.subType,
-    monitorPort:          options.port,
-    monitorKeywordType:   options.keywordType,
-    monitorKeywordValue:  options.keywordValue,
-    monitorHTTPUsername:  options.httpUsername,
-    monitorHTTPPassword:  options.httpPassword,
-    monitorAlertContacts: (options.alertContacts || []).join('-'),
-    monitorInterval:      options.interval
-  };
-  return this.request('newMonitor', params).nodeify(callback);
-};
+	this.request('getMonitors', options, function(error, response) {
+		let monitors = response.monitors
+		monitors.forEach(function (monitor) {
+			if (monitor.custom_uptime_ratio) monitor.custom_uptime_ratio = monitor.custom_uptime_ratio.split('-')
+			else monitor.custom_uptime_ratio = []
+			if (monitor.logs) {
+				monitor.logs.forEach(function (log) {
+					log.datetime = new Date(log.datetime)
+				})
+			}
+		})
+		callback(error, monitors)
+	})
+}
 
-Client.prototype.editMonitor = function (options, callback) {
-  if (!options.monitorID) throw new Error('monitorID is required');
-  var params = {
-    monitorID:            options.monitorID,
-    monitorFriendlyName:  options.friendlyName,
-    monitorURL:           options.url,
-    monitorSubType:       options.subType,
-    monitorPort:          options.port,
-    monitorKeywordType:   options.keywordType,
-    monitorKeywordValue:  options.keywordValue,
-    monitorHTTPUsername:  options.httpUsername,
-    monitorHTTPPassword:  options.httpPassword,
-    monitorAlertContacts: (options.alertContacts || []).join('-'),
-    monitorInterval:      options.interval
-  };
-  return this.request('editMonitor', params).nodeify(callback);
-};
+Robot.prototype.newMonitor = function (options, callback) {
+	if (!options.friendly_name) throw new Error('friendly_name is required')
+	if (!options.url) throw new Error('url is required')
+	options.type = options.type || '1'
+	options.alert_contacts = normaliseArray(options.alert_contacts)
+	options.mwindows = normaliseArray(options.mwindows)
 
-Client.prototype.deleteMonitor = function (id, callback) {
-  return this.request('deleteMonitor', { monitorID: id }).nodeify(callback);
-};
+	this.request('newMonitor', options, function(error, response) {
+		callback(error, response)
+	})
+}
 
-Client.prototype.resetMonitor = function (id, callback) {
-  return this.request('resetMonitor', { monitorID: id }).nodeify(callback);
-};
+Robot.prototype.editMonitor = function (options, callback) {
+	if (!options.id) throw new Error('Monitor id is required')
+	options.alert_contacts = normaliseArray(options.alert_contacts)
+	options.mwindows = normaliseArray(options.mwindows)
 
-Client.prototype.getAlertContacts = function (options, callback) {
-  if (typeof options === 'function') {
-    callback = options;
-    options = {};
-  }
-  options = options || {};
-  var params = {};
-  if (options.alertContacts) params.alertcontacts = options.alertContacts.join('-');
-  if (options.offset) params.offset = options.offset;
-  if (options.limit) params.limit = options.limit;
+	this.request('editMonitor', options, function(error, response) {
+		callback(error, response)
+	})
+}
 
-  return this.request('getAlertContacts', params).then(function (res) {
-    return res.alertcontacts.alertcontact;
-  }).nodeify(callback);
-};
+Robot.prototype.deleteMonitor = function (id, callback) {
+	this.request('deleteMonitor', { id: id }, function(error, response) {
+		callback(error, response)
+	})
+}
 
-Client.prototype.getAllAlertContactIds = function (callback) {
-  return this.getAlertContacts().then(function(alertContacts) {
-    return alertContacts.map(function (c) { return c.id; });
-  }).nodeify(callback);
-};
+Robot.prototype.resetMonitor = function (id, callback) {
+	this.request('resetMonitor', { id: id }, function(error, response) {
+		callback(error, response)
+	})
+}
 
+Robot.prototype.getAlertContacts = function (options, callback) {
+	if (typeof options === 'function') {
+		callback = options
+		options = {}
+	}
+	options = options || {}
+	if (options.alert_contacts) options.alert_contacts = normaliseArray(options.alert_contacts)
+	if (options.offset) options.offset = options.offset
+	if (options.limit) options.limit = options.limit
 
-var datePattern = /^(\d\d)\/(\d\d)\/(\d\d\d\d) (\d\d):(\d\d):(\d\d)$/;
-function parseDate(str) {
-  var match = datePattern.exec(str);
-  var month = +match[1];
-  var day = +match[2];
-  var year = +match[3];
-  var hour = +match[4];
-  var minute = +match[5];
-  var second = +match[6];
+	this.request('getAlertContacts', options, function(error, response) {
+		callback(error, response)
+	})
+}
 
-  return new Date(year, month - 1, day, hour, minute, second);
+function normaliseArray(arr) {
+	return (arr || []).join('-')
 }
